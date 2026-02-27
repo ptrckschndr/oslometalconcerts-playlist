@@ -148,18 +148,19 @@
     "use strict";
 
     // ── Config ──────────────────────────────────────────────────
-    const REDIRECT_URI = window.location.origin + window.location.pathname;
-    const SCOPES = "playlist-modify-private";
-    const STORAGE_KEY = "oslo_playlist";
-    const TOKEN_KEY = "oslo_playlist_token";
+    var REDIRECT_URI = window.location.origin + window.location.pathname;
+    var SCOPES = "playlist-modify-private";
+    var STORAGE_KEY = "oslo_playlist";
+    var TOKEN_KEY = "oslo_playlist_token";
+    var SEARCH_DELAY_MS = 1500; // 1.5 seconds between song searches
 
     // ── DOM helpers ─────────────────────────────────────────────
-    const $ = (id) => document.getElementById(id);
+    var $ = function (id) { return document.getElementById(id); };
 
     function setStep(id, status, text) {
-        const el = $(id);
+        var el = $(id);
         el.className = "step " + status;
-        const icon = el.querySelector(".icon");
+        var icon = el.querySelector(".icon");
         if (status === "active")
             icon.innerHTML = '<span class="spinner"></span>';
         else if (status === "done") icon.textContent = "\u2713";
@@ -168,18 +169,18 @@
     }
 
     function showError(msg) {
-        const el = $("error");
+        var el = $("error");
         el.style.display = "block";
         el.textContent = msg;
     }
 
     function showSongs(results) {
-        const el = $("song-list");
+        var el = $("song-list");
         el.classList.remove("hidden");
         el.innerHTML = results
             .map(
-                (s, i) =>
-                    '<div class="song ' +
+                function (s, i) {
+                    return '<div class="song ' +
                     (s.found ? "found" : "missing") +
                     '">' +
                     '<span class="num">' +
@@ -191,13 +192,14 @@
                     '<span class="status">' +
                     (s.found ? "\u2713" : "\u2717") +
                     "</span>" +
-                    "</div>"
+                    "</div>";
+                }
             )
             .join("");
     }
 
     function escapeHtml(s) {
-        const d = document.createElement("div");
+        var d = document.createElement("div");
         d.textContent = s;
         return d.innerHTML;
     }
@@ -211,10 +213,10 @@
 
     // ── PKCE helpers ────────────────────────────────────────────
     function randomString(len) {
-        const chars =
+        var chars =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-        const buf = crypto.getRandomValues(new Uint8Array(len));
-        return Array.from(buf, (b) => chars[b % chars.length]).join("");
+        var buf = crypto.getRandomValues(new Uint8Array(len));
+        return Array.from(buf, function (b) { return chars[b % chars.length]; }).join("");
     }
 
     async function sha256(plain) {
@@ -225,8 +227,8 @@
     }
 
     function base64url(buffer) {
-        let str = "";
-        new Uint8Array(buffer).forEach((b) => (str += String.fromCharCode(b)));
+        var str = "";
+        new Uint8Array(buffer).forEach(function (b) { str += String.fromCharCode(b); });
         return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
@@ -246,12 +248,10 @@
                 body: opts.body ? JSON.stringify(opts.body) : undefined,
             });
             if (resp.status === 429) {
-                var retryAfter = Math.max(
-                    parseInt(resp.headers.get("Retry-After") || "0", 10),
-                    3 * (attempt + 1)  // exponential: 3s, 6s, 9s, 12s, 15s
-                );
-                console.warn("Rate limited (attempt " + (attempt + 1) + "), waiting " + retryAfter + "s...");
-                await delay(retryAfter * 1000);
+                var retryAfter = parseInt(resp.headers.get("Retry-After") || "0", 10);
+                var waitSec = Math.max(retryAfter, 3 * (attempt + 1));
+                console.warn("Rate limited (attempt " + (attempt + 1) + "), waiting " + waitSec + "s...");
+                await delay(waitSec * 1000);
                 continue;
             }
             if (resp.status === 401) throw new Error("TOKEN_EXPIRED");
@@ -264,10 +264,79 @@
         throw new Error("Spotify API rate limited after 5 retries");
     }
 
+    // ── Track search (client-side) ──────────────────────────────
+    async function searchTracks(token, artist, songs) {
+        var results = [];
+        var trackUris = [];
+
+        for (var i = 0; i < songs.length; i++) {
+            // Wait between requests to avoid rate limiting
+            if (i > 0) await delay(SEARCH_DELAY_MS);
+
+            var song = songs[i];
+            var uri = null;
+
+            // Strategy 1: field search (most precise)
+            try {
+                var data = await spotifyApi(
+                    "https://api.spotify.com/v1/search?type=track&limit=5&q=" +
+                        encodeURIComponent("track:" + song + " artist:" + artist),
+                    token
+                );
+                var items = (data.tracks && data.tracks.items) || [];
+                for (var j = 0; j < items.length; j++) {
+                    var artists = items[j].artists || [];
+                    for (var k = 0; k < artists.length; k++) {
+                        if (artists[k].name.toLowerCase() === artist.toLowerCase()) {
+                            uri = items[j].uri;
+                            break;
+                        }
+                    }
+                    if (uri) break;
+                }
+            } catch (e) {
+                console.warn("Field search failed for '" + song + "':", e.message);
+            }
+
+            // Strategy 2: keyword search (broader)
+            if (!uri) {
+                try {
+                    await delay(SEARCH_DELAY_MS);
+                    var data2 = await spotifyApi(
+                        "https://api.spotify.com/v1/search?type=track&limit=5&q=" +
+                            encodeURIComponent(song + " " + artist),
+                        token
+                    );
+                    var items2 = (data2.tracks && data2.tracks.items) || [];
+                    for (var j2 = 0; j2 < items2.length; j2++) {
+                        var artists2 = items2[j2].artists || [];
+                        for (var k2 = 0; k2 < artists2.length; k2++) {
+                            if (artists2[k2].name.toLowerCase() === artist.toLowerCase()) {
+                                uri = items2[j2].uri;
+                                break;
+                            }
+                        }
+                        if (uri) break;
+                    }
+                } catch (e2) {
+                    console.warn("Keyword search failed for '" + song + "':", e2.message);
+                }
+            }
+
+            results.push({ name: song, found: !!uri });
+            if (uri) trackUris.push(uri);
+
+            // Update song list in real-time
+            showSongs(results);
+        }
+
+        return { results: results, trackUris: trackUris };
+    }
+
     // ── Token management ────────────────────────────────────────
     function getCachedToken() {
         try {
-            const d = JSON.parse(sessionStorage.getItem(TOKEN_KEY));
+            var d = JSON.parse(sessionStorage.getItem(TOKEN_KEY));
             if (d && d.token && d.expires > Date.now()) return d.token;
         } catch (_) {}
         return null;
@@ -281,24 +350,27 @@
     }
 
     // ── Playlist creation ───────────────────────────────────────
-    async function createPlaylist(token, artist, songs, preResolvedUris) {
-        // Use pre-resolved track URIs from server (no search API calls needed)
-        var trackUris = preResolvedUris || [];
+    async function createPlaylist(token, artist, songs) {
+        // Step: search for tracks on Spotify
+        setStep("step-search", "active", "Searching for tracks...");
+        var search = await searchTracks(token, artist, songs);
+        var trackUris = search.trackUris;
+
         setStep("step-search", "done",
-            trackUris.length + "/" + songs.length + " tracks matched");
+            trackUris.length + "/" + songs.length + " tracks found");
 
         if (trackUris.length === 0) {
             setStep("step-create", "error", "No tracks found");
             showError(
                 "Could not find any of these songs on Spotify for " +
                     artist +
-                    "."
+                    ". The artist may not be on Spotify."
             );
             return;
         }
 
         // Step: create playlist
-        setStep("step-create", "active");
+        setStep("step-create", "active", "Creating playlist...");
         var me = await spotifyApi("https://api.spotify.com/v1/me", token);
         var playlist = await spotifyApi(
             "https://api.spotify.com/v1/users/" +
@@ -316,7 +388,7 @@
             }
         );
 
-        // Add tracks (max 100 per request, we have at most 12)
+        // Add tracks (max 100 per request, we have at most 25)
         await spotifyApi(
             "https://api.spotify.com/v1/playlists/" +
                 playlist.id +
@@ -337,7 +409,7 @@
     }
 
     // ── OAuth flow ──────────────────────────────────────────────
-    async function startOAuth(clientId, artist, songs, setlistUrl, uris) {
+    async function startOAuth(clientId, artist, songs, setlistUrl) {
         setStep("step-auth", "active");
         var verifier = randomString(64);
         var challenge = base64url(await sha256(verifier));
@@ -352,7 +424,6 @@
                 songs: songs,
                 client_id: clientId,
                 setlist_url: setlistUrl || "",
-                uris: uris || [],
             })
         );
 
@@ -423,12 +494,11 @@
         // Clean URL
         window.history.replaceState({}, "", REDIRECT_URI);
 
-        // Create playlist
+        // Search tracks and create playlist
         await createPlaylist(
             tokenData.access_token,
             stored.artist,
-            stored.songs,
-            stored.uris
+            stored.songs
         );
 
         // Clean up session
@@ -473,16 +543,9 @@
         var songs = songsStr.split(",").map(function (s) {
             return s.trim();
         }).filter(Boolean);
-        var urisStr = params.get("uris") || "";
-        var uris = urisStr ? urisStr.split(",").filter(Boolean) : [];
 
         if (songs.length === 0) {
             showError("No songs provided.");
-            return;
-        }
-
-        if (uris.length === 0) {
-            showError("No track data available. Please try again from a newer digest.");
             return;
         }
 
@@ -494,7 +557,7 @@
         if (cachedToken) {
             setStep("step-auth", "done", "Connected to Spotify");
             try {
-                await createPlaylist(cachedToken, artist, songs, uris);
+                await createPlaylist(cachedToken, artist, songs);
                 return;
             } catch (e) {
                 if (e.message === "TOKEN_EXPIRED") {
@@ -507,7 +570,7 @@
         }
 
         // Start OAuth
-        await startOAuth(clientId, artist, songs, setlistUrl, uris);
+        await startOAuth(clientId, artist, songs, setlistUrl);
     } catch (err) {
         showError("Something went wrong: " + err.message);
         console.error(err);
