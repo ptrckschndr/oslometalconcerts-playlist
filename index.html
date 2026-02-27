@@ -315,13 +315,22 @@
                 }
             } catch (e) {
                 if (e.message === "TOKEN_EXPIRED") throw e;
-                songResults.push({ name: song, found: false });
+                console.error("Search failed for '" + song + "':", e.message);
+                songResults.push({ name: song, found: false, error: e.message });
             }
         }
 
         var foundCount = songResults.filter(function (s) {
             return s.found;
         }).length;
+
+        // If all songs failed, show the first error to help debug
+        if (foundCount === 0) {
+            var firstErr = songResults.find(function (s) { return s.error; });
+            if (firstErr) {
+                showError("Search failed: " + firstErr.error);
+            }
+        }
         setStep(
             "step-search",
             "done",
