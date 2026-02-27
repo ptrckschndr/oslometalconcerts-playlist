@@ -281,79 +281,11 @@
     }
 
     // ── Playlist creation ───────────────────────────────────────
-    async function createPlaylist(token, artist, songs) {
-        // Step: search tracks
-        setStep("step-search", "active");
-        var trackUris = [];
-        var songResults = [];
-
-        for (var i = 0; i < songs.length; i++) {
-            var song = songs[i];
-            // Rate limit: wait between song searches
-            if (i > 0) await delay(1000);
-            try {
-                // Try multiple search strategies: field search → loose keywords
-                var queries = [
-                    "track:" + song + " artist:" + artist,
-                    song + " " + artist,
-                ];
-                var match = null;
-
-                for (var qi = 0; qi < queries.length && !match; qi++) {
-                    var q = encodeURIComponent(queries[qi]);
-                    var searchUrl = "https://api.spotify.com/v1/search?q=" +
-                            q + "&type=track&limit=5";
-                    var data = await spotifyApi(searchUrl, token);
-                    var items = (data.tracks && data.tracks.items) || [];
-                    console.log("Search [" + qi + "] '" + song + "':", queries[qi],
-                        "→", items.length, "results",
-                        items.length > 0 ? items[0].name + " by " + items[0].artists[0].name : "(empty)");
-                    // Prefer exact artist name match
-                    for (var j = 0; j < items.length; j++) {
-                        var trackArtists = items[j].artists || [];
-                        for (var k = 0; k < trackArtists.length; k++) {
-                            if (
-                                trackArtists[k].name.toLowerCase() ===
-                                artist.toLowerCase()
-                            ) {
-                                match = items[j];
-                                break;
-                            }
-                        }
-                        if (match) break;
-                    }
-                }
-
-                if (match) {
-                    trackUris.push(match.uri);
-                    songResults.push({ name: song, found: true });
-                } else {
-                    songResults.push({ name: song, found: false });
-                }
-            } catch (e) {
-                if (e.message === "TOKEN_EXPIRED") throw e;
-                console.error("Search failed for '" + song + "':", e.message);
-                songResults.push({ name: song, found: false, error: e.message });
-            }
-        }
-
-        var foundCount = songResults.filter(function (s) {
-            return s.found;
-        }).length;
-
-        // If all songs failed, show the first error to help debug
-        if (foundCount === 0) {
-            var firstErr = songResults.find(function (s) { return s.error; });
-            if (firstErr) {
-                showError("Search failed: " + firstErr.error);
-            }
-        }
-        setStep(
-            "step-search",
-            "done",
-            "Found " + foundCount + "/" + songs.length + " tracks"
-        );
-        showSongs(songResults);
+    async function createPlaylist(token, artist, songs, preResolvedUris) {
+        // Use pre-resolved track URIs from server (no search API calls needed)
+        var trackUris = preResolvedUris || [];
+        setStep("step-search", "done",
+            trackUris.length + "/" + songs.length + " tracks matched");
 
         if (trackUris.length === 0) {
             setStep("step-create", "error", "No tracks found");
@@ -405,7 +337,7 @@
     }
 
     // ── OAuth flow ──────────────────────────────────────────────
-    async function startOAuth(clientId, artist, songs, setlistUrl) {
+    async function startOAuth(clientId, artist, songs, setlistUrl, uris) {
         setStep("step-auth", "active");
         var verifier = randomString(64);
         var challenge = base64url(await sha256(verifier));
@@ -420,6 +352,7 @@
                 songs: songs,
                 client_id: clientId,
                 setlist_url: setlistUrl || "",
+                uris: uris || [],
             })
         );
 
@@ -494,7 +427,8 @@
         await createPlaylist(
             tokenData.access_token,
             stored.artist,
-            stored.songs
+            stored.songs,
+            stored.uris
         );
 
         // Clean up session
@@ -539,9 +473,16 @@
         var songs = songsStr.split(",").map(function (s) {
             return s.trim();
         }).filter(Boolean);
+        var urisStr = params.get("uris") || "";
+        var uris = urisStr ? urisStr.split(",").filter(Boolean) : [];
 
         if (songs.length === 0) {
             showError("No songs provided.");
+            return;
+        }
+
+        if (uris.length === 0) {
+            showError("No track data available. Please try again from a newer digest.");
             return;
         }
 
@@ -553,7 +494,7 @@
         if (cachedToken) {
             setStep("step-auth", "done", "Connected to Spotify");
             try {
-                await createPlaylist(cachedToken, artist, songs);
+                await createPlaylist(cachedToken, artist, songs, uris);
                 return;
             } catch (e) {
                 if (e.message === "TOKEN_EXPIRED") {
@@ -566,7 +507,7 @@
         }
 
         // Start OAuth
-        await startOAuth(clientId, artist, songs, setlistUrl);
+        await startOAuth(clientId, artist, songs, setlistUrl, uris);
     } catch (err) {
         showError("Something went wrong: " + err.message);
         console.error(err);
