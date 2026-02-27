@@ -233,12 +233,12 @@
     // ── Spotify API ─────────────────────────────────────────────
     async function spotifyApi(url, token, opts) {
         opts = opts || {};
+        var method = opts.method || "GET";
+        var headers = { Authorization: "Bearer " + token };
+        if (opts.body) headers["Content-Type"] = "application/json";
         const resp = await fetch(url, {
-            method: opts.method || "GET",
-            headers: {
-                Authorization: "Bearer " + token,
-                "Content-Type": "application/json",
-            },
+            method: method,
+            headers: headers,
             body: opts.body ? JSON.stringify(opts.body) : undefined,
         });
         if (resp.status === 401) throw new Error("TOKEN_EXPIRED");
@@ -284,13 +284,13 @@
 
                 for (var qi = 0; qi < queries.length && !match; qi++) {
                     var q = encodeURIComponent(queries[qi]);
-                    var data = await spotifyApi(
-                        "https://api.spotify.com/v1/search?q=" +
-                            q +
-                            "&type=track&limit=5",
-                        token
-                    );
+                    var searchUrl = "https://api.spotify.com/v1/search?q=" +
+                            q + "&type=track&limit=5";
+                    var data = await spotifyApi(searchUrl, token);
                     var items = (data.tracks && data.tracks.items) || [];
+                    console.log("Search [" + qi + "] '" + song + "':", queries[qi],
+                        "→", items.length, "results",
+                        items.length > 0 ? items[0].name + " by " + items[0].artists[0].name : "(empty)");
                     // Prefer exact artist name match
                     for (var j = 0; j < items.length; j++) {
                         var trackArtists = items[j].artists || [];
