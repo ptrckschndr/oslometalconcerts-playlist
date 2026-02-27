@@ -251,7 +251,6 @@
                     3 * (attempt + 1)  // exponential: 3s, 6s, 9s, 12s, 15s
                 );
                 console.warn("Rate limited (attempt " + (attempt + 1) + "), waiting " + retryAfter + "s...");
-                setStep("step-search", "active", "Rate limited, waiting " + retryAfter + "s...");
                 await delay(retryAfter * 1000);
                 continue;
             }
@@ -292,8 +291,6 @@
             var song = songs[i];
             // Rate limit: wait between song searches
             if (i > 0) await delay(1000);
-            setStep("step-search", "active",
-                "Searching " + (i + 1) + "/" + songs.length + "...");
             try {
                 // Try multiple search strategies: field search → loose keywords
                 var queries = [
