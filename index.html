@@ -421,7 +421,14 @@
             var errText = await resp.text().catch(function () {
                 return "";
             });
-            showError("Failed to connect to Spotify. Please try again.");
+            var errMsg = "Token exchange failed (" + resp.status + ")";
+            try {
+                var errJson = JSON.parse(errText);
+                errMsg = errJson.error_description || errJson.error || errMsg;
+            } catch (_) {
+                if (errText) errMsg = errText;
+            }
+            showError("Spotify error: " + errMsg);
             setStep("step-auth", "error");
             console.error("Token exchange failed:", resp.status, errText);
             return;
@@ -448,6 +455,16 @@
     // ── Main ────────────────────────────────────────────────────
     try {
         var params = new URLSearchParams(window.location.search);
+
+        // Case 0: Spotify returned an error
+        if (params.has("error")) {
+            var errCode = params.get("error");
+            var errDesc = params.get("error_description") || errCode;
+            setStep("step-auth", "error");
+            showError("Spotify authorization failed: " + errDesc);
+            console.error("Spotify auth error:", errCode, errDesc);
+            return;
+        }
 
         // Case 1: OAuth callback
         if (params.has("code") && params.has("state")) {
