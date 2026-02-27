@@ -231,22 +231,34 @@
     }
 
     // ── Spotify API ─────────────────────────────────────────────
+    function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
     async function spotifyApi(url, token, opts) {
         opts = opts || {};
         var method = opts.method || "GET";
         var headers = { Authorization: "Bearer " + token };
         if (opts.body) headers["Content-Type"] = "application/json";
-        const resp = await fetch(url, {
-            method: method,
-            headers: headers,
-            body: opts.body ? JSON.stringify(opts.body) : undefined,
-        });
-        if (resp.status === 401) throw new Error("TOKEN_EXPIRED");
-        if (!resp.ok) {
-            const text = await resp.text().catch(() => "");
-            throw new Error("Spotify API " + resp.status + ": " + text);
+
+        for (var attempt = 0; attempt < 3; attempt++) {
+            var resp = await fetch(url, {
+                method: method,
+                headers: headers,
+                body: opts.body ? JSON.stringify(opts.body) : undefined,
+            });
+            if (resp.status === 429) {
+                var retryAfter = parseInt(resp.headers.get("Retry-After") || "2", 10);
+                console.warn("Rate limited, waiting " + retryAfter + "s...");
+                await delay(retryAfter * 1000);
+                continue;
+            }
+            if (resp.status === 401) throw new Error("TOKEN_EXPIRED");
+            if (!resp.ok) {
+                var text = await resp.text().catch(function () { return ""; });
+                throw new Error("Spotify API " + resp.status + ": " + text);
+            }
+            return resp.json();
         }
-        return resp.json();
+        throw new Error("Spotify API rate limited after 3 retries");
     }
 
     // ── Token management ────────────────────────────────────────
@@ -274,8 +286,12 @@
 
         for (var i = 0; i < songs.length; i++) {
             var song = songs[i];
+            // Rate limit: wait between song searches
+            if (i > 0) await delay(300);
+            setStep("step-search", "active",
+                "Searching " + (i + 1) + "/" + songs.length + "...");
             try {
-                // Try multiple search strategies: exact → loose → artist+song words
+                // Try multiple search strategies: field search → loose keywords
                 var queries = [
                     "track:" + song + " artist:" + artist,
                     song + " " + artist,
