@@ -93,6 +93,15 @@
             color: #fca5a5;
             display: none;
         }
+        .setlist-link {
+            margin-top: 12px;
+            font-size: 12px;
+        }
+        .setlist-link a {
+            color: #8b5cf6;
+            text-decoration: none;
+        }
+        .setlist-link a:hover { text-decoration: underline; }
         .footer {
             margin-top: 28px;
             font-size: 11px;
@@ -125,6 +134,7 @@
         <div id="song-list" class="song-list hidden"></div>
         <div id="error" class="error-box"></div>
         <div id="result" class="result hidden"></div>
+        <div id="setlist-link" class="setlist-link hidden"></div>
 
         <div class="footer">
             Oslo Metal Digest &middot; Powered by
@@ -190,6 +200,13 @@
         const d = document.createElement("div");
         d.textContent = s;
         return d.innerHTML;
+    }
+
+    function showSetlistLink(url) {
+        if (!url) return;
+        var el = $("setlist-link");
+        el.classList.remove("hidden");
+        el.innerHTML = '&#9835; <a href="' + escapeHtml(url) + '" target="_blank">View setlist on Setlist.fm</a>';
     }
 
     // ── PKCE helpers ────────────────────────────────────────────
@@ -362,7 +379,7 @@
     }
 
     // ── OAuth flow ──────────────────────────────────────────────
-    async function startOAuth(clientId, artist, songs) {
+    async function startOAuth(clientId, artist, songs, setlistUrl) {
         setStep("step-auth", "active");
         var verifier = randomString(64);
         var challenge = base64url(await sha256(verifier));
@@ -376,6 +393,7 @@
                 artist: artist,
                 songs: songs,
                 client_id: clientId,
+                setlist_url: setlistUrl || "",
             })
         );
 
@@ -406,6 +424,7 @@
 
         $("artist-name").textContent =
             "Probable setlist for " + stored.artist;
+        showSetlistLink(stored.setlist_url);
         setStep("step-auth", "active", "Connecting to Spotify...");
 
         // Exchange code for token
@@ -480,6 +499,7 @@
         var artist = params.get("artist");
         var songsStr = params.get("songs");
         var clientId = params.get("client_id");
+        var setlistUrl = params.get("setlist_url") || "";
 
         if (!artist || !songsStr || !clientId) {
             $("artist-name").textContent = "";
@@ -500,6 +520,7 @@
         }
 
         $("artist-name").textContent = "Probable setlist for " + artist;
+        showSetlistLink(setlistUrl);
 
         // Check for cached token
         var cachedToken = getCachedToken();
@@ -519,7 +540,7 @@
         }
 
         // Start OAuth
-        await startOAuth(clientId, artist, songs);
+        await startOAuth(clientId, artist, songs, setlistUrl);
     } catch (err) {
         showError("Something went wrong: " + err.message);
         console.error(err);
