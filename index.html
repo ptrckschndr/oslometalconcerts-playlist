@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Create Setlist Playlist — Oslo Metal Digest</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #111827;
+            color: #f9fafb;
+            font-family: Arial, Helvetica, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            background: #1f2937;
+            border-radius: 8px;
+            max-width: 480px;
+            width: 100%;
+            padding: 32px;
+            text-align: center;
+        }
+        h1 { color: #f59e0b; font-size: 22px; margin-bottom: 4px; }
+        .artist { color: #d1d5db; font-size: 15px; margin-bottom: 24px; }
+        .steps { text-align: left; margin: 20px 0; }
+        .step {
+            padding: 10px 12px;
+            font-size: 14px;
+            color: #6b7280;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-radius: 6px;
+            margin-bottom: 4px;
+            transition: all 0.3s;
+        }
+        .step.active { color: #f9fafb; background: #374151; }
+        .step.done { color: #16a34a; }
+        .step.error { color: #dc2626; }
+        .step .icon { width: 20px; text-align: center; flex-shrink: 0; }
+        .spinner {
+            display: inline-block;
+            width: 16px; height: 16px;
+            border: 2px solid #374151;
+            border-top-color: #f59e0b;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .song-list {
+            text-align: left;
+            margin: 16px 0;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .song-list .song {
+            padding: 4px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .song .num { color: #6b7280; width: 20px; text-align: right; flex-shrink: 0; }
+        .song.found .name { color: #d1d5db; }
+        .song.missing .name { color: #4b5563; text-decoration: line-through; }
+        .song .status { flex-shrink: 0; }
+        .song.found .status { color: #16a34a; }
+        .song.missing .status { color: #6b7280; }
+        .result { margin-top: 20px; }
+        .btn {
+            display: inline-block;
+            background: #1DB954;
+            color: #fff;
+            padding: 14px 36px;
+            border-radius: 24px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 16px;
+            transition: background 0.2s;
+            margin-top: 16px;
+        }
+        .btn:hover { background: #1ed760; }
+        .error-box {
+            background: #7f1d1d;
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin: 16px 0;
+            font-size: 13px;
+            color: #fca5a5;
+            display: none;
+        }
+        .footer {
+            margin-top: 28px;
+            font-size: 11px;
+            color: #4b5563;
+        }
+        .footer a { color: #6b7280; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>&#x1F918; Setlist Playlist</h1>
+        <div class="artist" id="artist-name"></div>
+
+        <div class="steps" id="steps">
+            <div class="step" id="step-auth">
+                <span class="icon">&#9675;</span>
+                <span>Connect to Spotify</span>
+            </div>
+            <div class="step" id="step-search">
+                <span class="icon">&#9675;</span>
+                <span>Search for tracks</span>
+            </div>
+            <div class="step" id="step-create">
+                <span class="icon">&#9675;</span>
+                <span>Create playlist</span>
+            </div>
+        </div>
+
+        <div id="song-list" class="song-list hidden"></div>
+        <div id="error" class="error-box"></div>
+        <div id="result" class="result hidden"></div>
+
+        <div class="footer">
+            Oslo Metal Digest &middot; Powered by
+            <a href="https://developer.spotify.com/" target="_blank">Spotify</a> &amp;
+            <a href="https://www.setlist.fm/" target="_blank">Setlist.fm</a>
+        </div>
+    </div>
+
+<script>
+(async function () {
+    "use strict";
+
+    // ── Config ──────────────────────────────────────────────────
+    const REDIRECT_URI = window.location.origin + window.location.pathname;
+    const SCOPES = "playlist-modify-private";
+    const STORAGE_KEY = "oslo_playlist";
+    const TOKEN_KEY = "oslo_playlist_token";
+
+    // ── DOM helpers ─────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+
+    function setStep(id, status, text) {
+        const el = $(id);
+        el.className = "step " + status;
+        const icon = el.querySelector(".icon");
+        if (status === "active")
+            icon.innerHTML = '<span class="spinner"></span>';
+        else if (status === "done") icon.textContent = "\u2713";
+        else if (status === "error") icon.textContent = "\u2717";
+        if (text) el.querySelector("span:last-child").textContent = text;
+    }
+
+    function showError(msg) {
+        const el = $("error");
+        el.style.display = "block";
+        el.textContent = msg;
+    }
+
+    function showSongs(results) {
+        const el = $("song-list");
+        el.classList.remove("hidden");
+        el.innerHTML = results
+            .map(
+                (s, i) =>
+                    '<div class="song ' +
+                    (s.found ? "found" : "missing") +
+                    '">' +
+                    '<span class="num">' +
+                    (i + 1) +
+                    ".</span>" +
+                    '<span class="name">' +
+                    escapeHtml(s.name) +
+                    "</span>" +
+                    '<span class="status">' +
+                    (s.found ? "\u2713" : "\u2717") +
+                    "</span>" +
+                    "</div>"
+            )
+            .join("");
+    }
+
+    function escapeHtml(s) {
+        const d = document.createElement("div");
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    // ── PKCE helpers ────────────────────────────────────────────
+    function randomString(len) {
+        const chars =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+        const buf = crypto.getRandomValues(new Uint8Array(len));
+        return Array.from(buf, (b) => chars[b % chars.length]).join("");
+    }
+
+    async function sha256(plain) {
+        return crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(plain)
+        );
+    }
+
+    function base64url(buffer) {
+        let str = "";
+        new Uint8Array(buffer).forEach((b) => (str += String.fromCharCode(b)));
+        return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    // ── Spotify API ─────────────────────────────────────────────
+    async function spotifyApi(url, token, opts) {
+        opts = opts || {};
+        const resp = await fetch(url, {
+            method: opts.method || "GET",
+            headers: {
+                Authorization: "Bearer " + token,
+                "Content-Type": "application/json",
+            },
+            body: opts.body ? JSON.stringify(opts.body) : undefined,
+        });
+        if (resp.status === 401) throw new Error("TOKEN_EXPIRED");
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => "");
+            throw new Error("Spotify API " + resp.status + ": " + text);
+        }
+        return resp.json();
+    }
+
+    // ── Token management ────────────────────────────────────────
+    function getCachedToken() {
+        try {
+            const d = JSON.parse(sessionStorage.getItem(TOKEN_KEY));
+            if (d && d.token && d.expires > Date.now()) return d.token;
+        } catch (_) {}
+        return null;
+    }
+
+    function cacheToken(token, expiresIn) {
+        sessionStorage.setItem(
+            TOKEN_KEY,
+            JSON.stringify({ token: token, expires: Date.now() + expiresIn * 1000 })
+        );
+    }
+
+    // ── Playlist creation ───────────────────────────────────────
+    async function createPlaylist(token, artist, songs) {
+        // Step: search tracks
+        setStep("step-search", "active");
+        var trackUris = [];
+        var songResults = [];
+
+        for (var i = 0; i < songs.length; i++) {
+            var song = songs[i];
+            try {
+                var q = encodeURIComponent(
+                    'track:"' + song + '" artist:"' + artist + '"'
+                );
+                var data = await spotifyApi(
+                    "https://api.spotify.com/v1/search?q=" +
+                        q +
+                        "&type=track&limit=3",
+                    token
+                );
+                // Pick best match: prefer exact artist name match
+                var match = null;
+                var items = (data.tracks && data.tracks.items) || [];
+                for (var j = 0; j < items.length; j++) {
+                    var artists = items[j].artists || [];
+                    for (var k = 0; k < artists.length; k++) {
+                        if (
+                            artists[k].name.toLowerCase() ===
+                            artist.toLowerCase()
+                        ) {
+                            match = items[j];
+                            break;
+                        }
+                    }
+                    if (match) break;
+                }
+                // Fall back to first result if no exact artist match
+                if (!match && items.length > 0) match = items[0];
+
+                if (match) {
+                    trackUris.push(match.uri);
+                    songResults.push({ name: song, found: true });
+                } else {
+                    songResults.push({ name: song, found: false });
+                }
+            } catch (e) {
+                if (e.message === "TOKEN_EXPIRED") throw e;
+                songResults.push({ name: song, found: false });
+            }
+        }
+
+        var foundCount = songResults.filter(function (s) {
+            return s.found;
+        }).length;
+        setStep(
+            "step-search",
+            "done",
+            "Found " + foundCount + "/" + songs.length + " tracks"
+        );
+        showSongs(songResults);
+
+        if (trackUris.length === 0) {
+            setStep("step-create", "error", "No tracks found");
+            showError(
+                "Could not find any of these songs on Spotify for " +
+                    artist +
+                    "."
+            );
+            return;
+        }
+
+        // Step: create playlist
+        setStep("step-create", "active");
+        var me = await spotifyApi("https://api.spotify.com/v1/me", token);
+        var playlist = await spotifyApi(
+            "https://api.spotify.com/v1/users/" +
+                encodeURIComponent(me.id) +
+                "/playlists",
+            token,
+            {
+                method: "POST",
+                body: {
+                    name: artist + " \u2014 Probable Setlist",
+                    description:
+                        "Probable setlist based on recent concerts. Generated by Oslo Metal Digest via Setlist.fm data.",
+                    public: false,
+                },
+            }
+        );
+
+        // Add tracks (max 100 per request, we have at most 12)
+        await spotifyApi(
+            "https://api.spotify.com/v1/playlists/" +
+                playlist.id +
+                "/tracks",
+            token,
+            { method: "POST", body: { uris: trackUris } }
+        );
+
+        setStep("step-create", "done", "Playlist created!");
+
+        // Show result
+        var resultEl = $("result");
+        resultEl.classList.remove("hidden");
+        resultEl.innerHTML =
+            '<a class="btn" href="https://open.spotify.com/playlist/' +
+            playlist.id +
+            '" target="_blank">Open in Spotify &#9654;</a>';
+    }
+
+    // ── OAuth flow ──────────────────────────────────────────────
+    async function startOAuth(clientId, artist, songs) {
+        setStep("step-auth", "active");
+        var verifier = randomString(64);
+        var challenge = base64url(await sha256(verifier));
+        var state = randomString(16);
+
+        sessionStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({
+                verifier: verifier,
+                state: state,
+                artist: artist,
+                songs: songs,
+                client_id: clientId,
+            })
+        );
+
+        var url = new URL("https://accounts.spotify.com/authorize");
+        url.searchParams.set("client_id", clientId);
+        url.searchParams.set("response_type", "code");
+        url.searchParams.set("redirect_uri", REDIRECT_URI);
+        url.searchParams.set("scope", SCOPES);
+        url.searchParams.set("code_challenge_method", "S256");
+        url.searchParams.set("code_challenge", challenge);
+        url.searchParams.set("state", state);
+
+        window.location.href = url.toString();
+    }
+
+    async function handleCallback(code, state) {
+        var stored = null;
+        try {
+            stored = JSON.parse(sessionStorage.getItem(STORAGE_KEY));
+        } catch (_) {}
+
+        if (!stored || stored.state !== state) {
+            showError(
+                "Invalid session state. Please click the link from your email again."
+            );
+            return;
+        }
+
+        $("artist-name").textContent =
+            "Probable setlist for " + stored.artist;
+        setStep("step-auth", "active", "Connecting to Spotify...");
+
+        // Exchange code for token
+        var resp = await fetch("https://accounts.spotify.com/api/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                client_id: stored.client_id,
+                grant_type: "authorization_code",
+                code: code,
+                redirect_uri: REDIRECT_URI,
+                code_verifier: stored.verifier,
+            }),
+        });
+
+        if (!resp.ok) {
+            var errText = await resp.text().catch(function () {
+                return "";
+            });
+            showError("Failed to connect to Spotify. Please try again.");
+            setStep("step-auth", "error");
+            console.error("Token exchange failed:", resp.status, errText);
+            return;
+        }
+
+        var tokenData = await resp.json();
+        cacheToken(tokenData.access_token, tokenData.expires_in || 3600);
+        setStep("step-auth", "done");
+
+        // Clean URL
+        window.history.replaceState({}, "", REDIRECT_URI);
+
+        // Create playlist
+        await createPlaylist(
+            tokenData.access_token,
+            stored.artist,
+            stored.songs
+        );
+
+        // Clean up session
+        sessionStorage.removeItem(STORAGE_KEY);
+    }
+
+    // ── Main ────────────────────────────────────────────────────
+    try {
+        var params = new URLSearchParams(window.location.search);
+
+        // Case 1: OAuth callback
+        if (params.has("code") && params.has("state")) {
+            await handleCallback(params.get("code"), params.get("state"));
+            return;
+        }
+
+        // Case 2: Fresh visit with params
+        var artist = params.get("artist");
+        var songsStr = params.get("songs");
+        var clientId = params.get("client_id");
+
+        if (!artist || !songsStr || !clientId) {
+            $("artist-name").textContent = "";
+            $("steps").classList.add("hidden");
+            showError(
+                "Missing parameters. Please use the link from your Oslo Metal Digest email."
+            );
+            return;
+        }
+
+        var songs = songsStr.split(",").map(function (s) {
+            return s.trim();
+        }).filter(Boolean);
+
+        if (songs.length === 0) {
+            showError("No songs provided.");
+            return;
+        }
+
+        $("artist-name").textContent = "Probable setlist for " + artist;
+
+        // Check for cached token
+        var cachedToken = getCachedToken();
+        if (cachedToken) {
+            setStep("step-auth", "done", "Connected to Spotify");
+            try {
+                await createPlaylist(cachedToken, artist, songs);
+                return;
+            } catch (e) {
+                if (e.message === "TOKEN_EXPIRED") {
+                    sessionStorage.removeItem(TOKEN_KEY);
+                    // Fall through to OAuth
+                } else {
+                    throw e;
+                }
+            }
+        }
+
+        // Start OAuth
+        await startOAuth(clientId, artist, songs);
+    } catch (err) {
+        showError("Something went wrong: " + err.message);
+        console.error(err);
+    }
+})();
+</script>
+</body>
+</html>
