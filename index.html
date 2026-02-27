@@ -258,33 +258,37 @@
         for (var i = 0; i < songs.length; i++) {
             var song = songs[i];
             try {
-                var q = encodeURIComponent(
-                    'track:"' + song + '" artist:"' + artist + '"'
-                );
-                var data = await spotifyApi(
-                    "https://api.spotify.com/v1/search?q=" +
-                        q +
-                        "&type=track&limit=3",
-                    token
-                );
-                // Pick best match: prefer exact artist name match
+                // Try multiple search strategies: exact → loose → artist+song words
+                var queries = [
+                    "track:" + song + " artist:" + artist,
+                    song + " " + artist,
+                ];
                 var match = null;
-                var items = (data.tracks && data.tracks.items) || [];
-                for (var j = 0; j < items.length; j++) {
-                    var artists = items[j].artists || [];
-                    for (var k = 0; k < artists.length; k++) {
-                        if (
-                            artists[k].name.toLowerCase() ===
-                            artist.toLowerCase()
-                        ) {
-                            match = items[j];
-                            break;
+
+                for (var qi = 0; qi < queries.length && !match; qi++) {
+                    var q = encodeURIComponent(queries[qi]);
+                    var data = await spotifyApi(
+                        "https://api.spotify.com/v1/search?q=" +
+                            q +
+                            "&type=track&limit=5",
+                        token
+                    );
+                    var items = (data.tracks && data.tracks.items) || [];
+                    // Prefer exact artist name match
+                    for (var j = 0; j < items.length; j++) {
+                        var trackArtists = items[j].artists || [];
+                        for (var k = 0; k < trackArtists.length; k++) {
+                            if (
+                                trackArtists[k].name.toLowerCase() ===
+                                artist.toLowerCase()
+                            ) {
+                                match = items[j];
+                                break;
+                            }
                         }
+                        if (match) break;
                     }
-                    if (match) break;
                 }
-                // Fall back to first result if no exact artist match
-                if (!match && items.length > 0) match = items[0];
 
                 if (match) {
                     trackUris.push(match.uri);
