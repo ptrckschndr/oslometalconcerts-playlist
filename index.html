@@ -488,6 +488,7 @@
         }
 
         var tokenData = await resp.json();
+        console.log("Token scopes granted:", tokenData.scope);
         cacheToken(tokenData.access_token, tokenData.expires_in || 3600);
         setStep("step-auth", "done");
 
