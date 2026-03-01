@@ -149,7 +149,7 @@
 
     // ── Config ──────────────────────────────────────────────────
     var REDIRECT_URI = window.location.origin + window.location.pathname;
-    var SCOPES = "playlist-modify-public playlist-modify-private user-read-private";
+    var SCOPES = "playlist-modify-public playlist-modify-private";
     var STORAGE_KEY = "oslo_playlist";
     var TOKEN_KEY = "oslo_playlist_token";
     var SEARCH_DELAY_MS = 1500; // 1.5 seconds between song searches
@@ -389,7 +389,7 @@
         await spotifyApi(
             "https://api.spotify.com/v1/playlists/" +
                 playlist.id +
-                "/tracks",
+                "/items",
             token,
             { method: "POST", body: { uris: trackUris } }
         );
@@ -485,7 +485,6 @@
         }
 
         var tokenData = await resp.json();
-        console.log("Token scopes granted:", tokenData.scope);
         cacheToken(tokenData.access_token, tokenData.expires_in || 3600);
         setStep("step-auth", "done");
 
