@@ -148,7 +148,7 @@
     "use strict";
 
     // ── Config ──────────────────────────────────────────────────
-    var REDIRECT_URI = window.location.origin + window.location.pathname;
+    var REDIRECT_URI = window.location.origin + window.location.pathname.replace(/\/+$/, "/");
     var SCOPES = "playlist-modify-public playlist-modify-private";
     var STORAGE_KEY = "oslo_playlist";
     var TOKEN_KEY = "oslo_playlist_token";
